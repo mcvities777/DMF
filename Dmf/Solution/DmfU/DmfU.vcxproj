@@ -92,10 +92,10 @@
       <AdditionalOptions Condition="'$(_NT_TARGET_VERSION)'=='$(_NT_TARGET_VERSION_WIN10_CO)'">/d2guardsignret %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>%(AdditionalDependencies);DmfUFramework.lib;DmfUModules.Library.lib;DmfUModules.Library.Tests.lib;</AdditionalDependencies>
+      <AdditionalDependencies>%(AdditionalDependencies);DmfUFramework.lib;DmfUModules.Library.lib;</AdditionalDependencies>
     </Link>
     <Lib>
-      <AdditionalDependencies>DmfUFramework.lib;DmfUModules.Library.lib;DmfUModules.Library.Tests.lib;</AdditionalDependencies>
+      <AdditionalDependencies>DmfUFramework.lib;DmfUModules.Library.lib;</AdditionalDependencies>
       <AdditionalLibraryDirectories>$(SolutionDir)$(ConfigurationName)\$(PlatformName)\individual_libs\DmfUFramework;$(SolutionDir)$(ConfigurationName)\$(PlatformName)\individual_libs\DmfUModules.Library;$(SolutionDir)$(ConfigurationName)\$(PlatformName)\individual_libs\DmfUModules.Library.Tests;</AdditionalLibraryDirectories>
     </Lib>
   </ItemDefinitionGroup>
