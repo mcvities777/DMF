@@ -910,6 +910,49 @@ Exit:
 
     return ntStatus;
 }
+
+#define iMaxTransferBin 52 
+VOID
+ComponentFirmwareUpdate_FillPayloadContentHeader(
+    _In_ const BYTE* PayloadBuffer,
+    _In_ BYTE** PayloadBufferInvolveHeader,
+    _In_ int headerCount,
+    _In_ size_t payloadSizeFromCollection
+)
+{
+    typedef struct _BIN_RECORD
+    {
+        ULONG Address;
+        BYTE Length;
+    } BIN_RECORD;
+    BIN_RECORD currentBinRecord;
+    const UINT32 BinRecordHeaderLength = sizeof(ULONG) + sizeof(BYTE);
+
+    BYTE* pPayloadBufferInvolveHeader;
+    pPayloadBufferInvolveHeader = *PayloadBufferInvolveHeader;
+    bool bLastPayload;
+    int iTransferAndHeader = BinRecordHeaderLength + iMaxTransferBin;
+    int dLastBin = (payloadSizeFromCollection % iMaxTransferBin);
+
+    for (int i = 0; i < headerCount; i++)
+    {
+        bLastPayload = ((i + 1) == headerCount) && (i != 0);
+        currentBinRecord.Address = 0 + iMaxTransferBin * i;
+        currentBinRecord.Length = (BYTE)(bLastPayload ? dLastBin : iMaxTransferBin);
+
+        memcpy_s((pPayloadBufferInvolveHeader + iTransferAndHeader * i),
+                BinRecordHeaderLength,
+                (void*)&(currentBinRecord), 
+                BinRecordHeaderLength
+        );
+
+        memcpy_s((pPayloadBufferInvolveHeader + BinRecordHeaderLength + iTransferAndHeader * i),
+                bLastPayload ? dLastBin : iMaxTransferBin,
+                (PayloadBuffer + iMaxTransferBin * i), 
+                bLastPayload ? dLastBin : iMaxTransferBin
+        );
+    }
+}
 #pragma code_seg()
 //-- Helper functions ---
 //--------END------------
@@ -2377,6 +2420,11 @@ Return Value:
     ULONG resumeSequenceNumberFromRegistry = 0;
 
     BOOL updateInterruptedFromIoFailure = FALSE;
+    BYTE* newPayloadBuffer;
+    int luPayloadSizeFromCollection;
+    const UINT32 BinRecordHeaderLength = sizeof(ULONG) + sizeof(BYTE);
+    int headerCount;
+    int resizePayloadSize;
 
     PAGED_CODE();
 
@@ -2407,6 +2455,12 @@ Return Value:
     DmfAssert(componentFirmwareUpdateTransportContext != NULL);
 
     payloadChunkMemory = WDF_NO_HANDLE;
+    luPayloadSizeFromCollection = (int)payloadSizeFromCollection;
+    headerCount = luPayloadSizeFromCollection / iMaxTransferBin;
+    if (luPayloadSizeFromCollection % iMaxTransferBin)
+        headerCount++;
+    resizePayloadSize = luPayloadSizeFromCollection + headerCount * BinRecordHeaderLength;
+    firmwareInformation->PayloadSize = resizePayloadSize;
 
     // Allocate memory for payload chunk, and reuse it for the sending the whole payload.
     //
@@ -2431,6 +2485,29 @@ Return Value:
 
     RtlZeroMemory(bufferHeader,
                   allocatedSize);
+
+    ntStatus = WdfMemoryCreate(&objectAttributes,
+                               NonPagedPoolNx,
+                               0,
+                               resizePayloadSize,
+                               &payloadChunkMemory,
+                               (VOID**)&newPayloadBuffer);
+    if (!NT_SUCCESS(ntStatus))
+    {
+        TraceEvents(TRACE_LEVEL_ERROR,
+                    DMF_TRACE,
+                    "WdfMemoryCreate for Offer fails: ntStatus=%!STATUS!",
+                    ntStatus);
+        goto Exit;
+    }
+
+    RtlZeroMemory(newPayloadBuffer, 
+                  resizePayloadSize);
+    
+    ComponentFirmwareUpdate_FillPayloadContentHeader((BYTE*)payloadContent, 
+                                                     (BYTE**)&newPayloadBuffer,
+                                                     headerCount,
+                                                     luPayloadSizeFromCollection);
 
     // Ensure the driver is packing 60 bytes of payload everytime.
     //
@@ -2601,7 +2678,7 @@ Return Value:
         //
         ntStatus = ComponentFirmwareUpdate_PayloadBufferFill(DmfModule,
                                                              sequenceNumber,
-                                                             (BYTE*)payloadContent,
+                                                             (BYTE*)newPayloadBuffer,
                                                              firmwareInformation->PayloadSize,
                                                              payloadBufferBinRecordStartIndex,
                                                              payloadBufferBinRecordDataOffset,
