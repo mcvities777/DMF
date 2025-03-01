@@ -84,7 +84,7 @@ typedef enum _FIRMWARE_UPDATE_STATUS
 //
 typedef struct _PAYLOAD_RESPONSE
 {
-    UINT16 SequenceNumber;
+    UINT32 SequenceNumber;
     COMPONENT_FIRMWARE_UPDATE_PAYLOAD_RESPONSE ResponseStatus;
 } PAYLOAD_RESPONSE;
 
@@ -197,7 +197,7 @@ PCWSTR ComponentFirmwareUpdate_ResumeOnConnectValueName = L"ResumeOnConnect";
 //
 // Each time 60 bytes of Payload sent.
 //
-#define SizeOfPayload (60)
+#define SizeOfPayload (260)
 // Offer is 16 bytes long.
 //
 #define SizeOfOffer (4*sizeof(ULONG))
@@ -419,7 +419,7 @@ _Must_inspect_result_
 NTSTATUS
 ComponentFirmwareUpdate_PayloadResponseProcess(
     _In_ DMFMODULE DmfModule,
-    _In_ UINT16 ExpectedSequenceNumber,
+    _In_ UINT32 ExpectedSequenceNumber,
     _Out_ COMPONENT_FIRMWARE_UPDATE_PAYLOAD_RESPONSE* PayloadResponse
     )
 /*++
@@ -597,13 +597,13 @@ static
 NTSTATUS
 ComponentFirmwareUpdate_PayloadBufferFill(
     _In_ DMFMODULE DmfModule,
-    _In_ const UINT16 SequenceNumber,
+    _In_ const UINT32 SequenceNumber,
     _In_reads_(PayloadBufferSize) const BYTE* PayloadBuffer,
     _In_ const size_t PayloadBufferSize,
     _Inout_ ULONG &PayloadBufferBinRecordStartIndex,
-    _Inout_ BYTE &PayloadBufferBinRecordDataOffset,
+    _Inout_ UINT16 &PayloadBufferBinRecordDataOffset,
     _Out_writes_(TransferBufferSize) UCHAR* TransferBuffer,
-    _In_ const BYTE TransferBufferSize
+    _In_ const UINT16 TransferBufferSize
     )
 /*++
 
@@ -635,12 +635,12 @@ Return Value:
     //
     #include <pshpack1.h>
     // This private structure holds the CFU formatted bin file, which is ||ADDR|L|DATA....
-    // Addr is 4 bytes, length is 1 bytes, and data[] as defined by length.
+    // Addr is 4 bytes, length is 2 bytes, and data[] as defined by length.
     //
     typedef struct _BIN_RECORD
     {
         ULONG Address;
-        BYTE Length;
+        UINT16 Length;
         BYTE BinData[1];
     } BIN_RECORD;
     // This private structure is used to build the Transfer buffer. 
@@ -648,8 +648,9 @@ Return Value:
     typedef struct _PAYLOAD
     {
         BYTE Flags;
-        BYTE DataLength;
-        UINT16 SequenceNumber;
+        BYTE Checksum;
+        UINT16 DataLength;
+        UINT32 SequenceNumber;
         ULONG Address;
         BYTE PayloadData[1];
     } PAYLOAD;
@@ -660,16 +661,16 @@ Return Value:
     CONTEXT_ComponentFirmwareUpdateTransport* componentFirmwareUpdateTransportContext;
 
     errno_t errorNumber;
-    BYTE dataLength;
-    BYTE remainingPayloadBufferLength;
+    UINT16 dataLength;
+    UINT16 remainingPayloadBufferLength;
 
     UINT32 lastAddressConsumed;
-    BYTE payloadBufferOffset;
+    UINT32 payloadBufferOffset;
 
     BIN_RECORD *currentBinRecord;
     PAYLOAD *payload;
-    const UINT32 BinRecordHeaderLength = sizeof(ULONG) + sizeof(BYTE);
-    const UINT32 PayloadHeaderLength = sizeof(BYTE) + sizeof(BYTE) + sizeof(UINT16) + sizeof(ULONG);
+    const UINT32 BinRecordHeaderLength = sizeof(ULONG) + sizeof(UINT16);
+    const UINT32 PayloadHeaderLength = sizeof(BYTE) + sizeof(BYTE) + sizeof(UINT16) + sizeof(UINT32) + sizeof(ULONG);
     
     PAGED_CODE();
 
@@ -825,6 +826,11 @@ Return Value:
         //
         PayloadBufferBinRecordDataOffset += dataLength;
         payload->DataLength = payloadBufferOffset;
+        payload->Checksum = 0;
+        for (UINT32 i = 0; i < payload->DataLength; i += 1)
+        {
+            payload->Checksum += payload->PayloadData[i];
+        }
 
         // If we are done reading this bin record. Advance to the next one.
         //
@@ -911,7 +917,7 @@ Exit:
     return ntStatus;
 }
 
-#define iMaxTransferBin 52 
+#define iMaxTransferBin 248 // (SizeOfPayload - header of structure PAYLOAD)
 VOID
 ComponentFirmwareUpdate_FillPayloadContentHeader(
     _In_ const BYTE* PayloadBuffer,
@@ -923,10 +929,10 @@ ComponentFirmwareUpdate_FillPayloadContentHeader(
     typedef struct _BIN_RECORD
     {
         ULONG Address;
-        BYTE Length;
+        UINT16 Length;
     } BIN_RECORD;
     BIN_RECORD currentBinRecord;
-    const UINT32 BinRecordHeaderLength = sizeof(ULONG) + sizeof(BYTE);
+    const UINT32 BinRecordHeaderLength = sizeof(ULONG) + sizeof(UINT16);
 
     BYTE* pPayloadBufferInvolveHeader;
     pPayloadBufferInvolveHeader = *PayloadBufferInvolveHeader;
@@ -2390,7 +2396,7 @@ Return Value:
     //
     UCHAR* bufferHeader;
     UCHAR* payloadBuffer;
-    BYTE payloadBufferLength;
+    UINT16 payloadBufferLength;
 
     // Index in the whole payload buffer that tracks the begining of a Bin Record.
     // Each Bin Record has {address, length, data}
@@ -2403,7 +2409,7 @@ Return Value:
 
     // Offset in the current bin record in the payload buffer.
     //
-    BYTE payloadBufferBinRecordDataOffset = 0;
+    UINT16 payloadBufferBinRecordDataOffset = 0;
 
     // Keep track of this offset in case of interruption.
     //
@@ -2411,9 +2417,9 @@ Return Value:
 
     // Do not start at 0 due to firmware limitations.
     //
-    const UINT16 sequenceNumberStart = 0x0001;
-    UINT16 sequenceNumber = 0;
-    UINT16 resumeSequenceNumber = 0;
+    const UINT32 sequenceNumberStart = 0x0001;
+    UINT32 sequenceNumber = 0;
+    UINT32 resumeSequenceNumber = 0;
 
     // Read a ULONG from registry.
     //
@@ -2422,7 +2428,7 @@ Return Value:
     BOOL updateInterruptedFromIoFailure = FALSE;
     BYTE* newPayloadBuffer;
     int luPayloadSizeFromCollection;
-    const UINT32 BinRecordHeaderLength = sizeof(ULONG) + sizeof(BYTE);
+    const UINT32 BinRecordHeaderLength = sizeof(ULONG) + sizeof(UINT16);
     int headerCount;
     int resizePayloadSize;
 
@@ -2509,7 +2515,7 @@ Return Value:
                                                      headerCount,
                                                      luPayloadSizeFromCollection);
 
-    // Ensure the driver is packing 60 bytes of payload everytime.
+    // Ensure the driver is packing SizeOfPayload bytes of payload everytime.
     //
     payloadBuffer = (UCHAR*)(bufferHeader + componentFirmwareUpdateTransportContext->TransportHeaderSize);
     payloadBufferLength = SizeOfPayload;
@@ -2620,14 +2626,14 @@ Return Value:
             break;
         }
 
-        // PayloadBufferBinRecordDataOffset is of type Byte, this is a sanity check for registry value to make sure
+        // PayloadBufferBinRecordDataOffset is of type 2 Bytes, this is a sanity check for registry value to make sure
         // the registry didn't corrupt the value.
         //
-        DmfAssert(resumePayloadBufferBinRecordDataOffset <= BYTE_MAX);
+        DmfAssert(resumePayloadBufferBinRecordDataOffset <= UINT16_MAX);
 
-        // Sequence number size is 2 Bytes.
+        // Sequence number size is 4 Bytes.
         //
-        DmfAssert(resumeSequenceNumberFromRegistry <= UINT16_MAX);
+        DmfAssert(resumeSequenceNumberFromRegistry <= UINT32_MAX);
         resumeSequenceNumber = (UINT16) resumeSequenceNumberFromRegistry;
         TraceEvents(TRACE_LEVEL_INFORMATION, 
                     DMF_TRACE, 
@@ -2638,7 +2644,7 @@ Return Value:
 
         payloadBufferBinRecordStartIndex = resumePayloadBufferBinRecordStartIndex;
         sequenceNumber = resumeSequenceNumber;
-        payloadBufferBinRecordDataOffset = (BYTE) resumePayloadBufferBinRecordDataOffset;
+        payloadBufferBinRecordDataOffset = resumePayloadBufferBinRecordDataOffset;
     } while (0);
 
     TraceEvents(TRACE_LEVEL_VERBOSE, 
@@ -5468,7 +5474,7 @@ Return:
 
     // Get Response Sequence Number (Bytes 0-1).
     //
-    UINT16 responseSequenceNumber = (UINT16)((payloadResponseLocal[0] >> 0) & 0xFFFF);
+    UINT32 responseSequenceNumber = (UINT32)((payloadResponseLocal[0] >> 0) & 0xFFFFFFFF);
 
     // Get Payload Response Status (Byte 0).
     //

@@ -54,7 +54,7 @@ const ULONG HIDDEVICE_RECOMMENDED_WAIT_TIMEOUT_MS = 90000;
 //
 // Each time 60 bytes of Payload sent.
 //
-#define SizeOfPayload (60)
+#define SizeOfPayload (260)
 // Offer is 16 bytes long.
 //
 #define SizeOfOffer (16)
