@@ -825,7 +825,7 @@ Return Value:
         // Keep track of how many bytes we consumed of the current bin record.
         //
         PayloadBufferBinRecordDataOffset += dataLength;
-        payload->DataLength = payloadBufferOffset;
+        payload->DataLength = (UINT16)payloadBufferOffset;
         payload->Checksum = 0;
         for (UINT32 i = 0; i < payload->DataLength; i += 1)
         {
@@ -2644,7 +2644,7 @@ Return Value:
 
         payloadBufferBinRecordStartIndex = resumePayloadBufferBinRecordStartIndex;
         sequenceNumber = resumeSequenceNumber;
-        payloadBufferBinRecordDataOffset = resumePayloadBufferBinRecordDataOffset;
+        payloadBufferBinRecordDataOffset = (UINT16) resumePayloadBufferBinRecordDataOffset;
     } while (0);
 
     TraceEvents(TRACE_LEVEL_VERBOSE, 
